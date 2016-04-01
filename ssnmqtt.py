@@ -12,10 +12,44 @@ import json
 
 # *******************************************
 logQueue = Queue()
+sendQueue = Queue()
+serLastReceive = 0
+
 
 def logWrite(logMsg, level='w'):
     logQueue.put(str(datetime.now()) + " " + logMsg)
     return
+
+def serPutMsg(buf):
+#    logWrite("serPutMsg")
+    sendQueue.put(buf)
+    return
+
+def serRead(ser, bufSize):
+    ser.setRTS(False)
+    if (len(RTS_GPIO)):
+        value = open("/sys/class/gpio/gpio"+str(RTS_GPIO)+"/value","w")
+        value.write(RTS_PASSIVE)
+        value.close()
+    return ser.read(bufSize)
+
+def serWrite(ser, buf):
+#    logWrite( "serWrite")
+    ser.setRTS(True)
+    if (len(RTS_GPIO)):
+        value = open("/sys/class/gpio/gpio"+str(RTS_GPIO)+"/value","w", 0)
+        value.write(RTS_ACTIVE)
+        value.flush()
+#        time.sleep(0.0005)
+    ser.write(buf)
+    while (ser.outWaiting() > 0):
+        time.sleep(0.001)
+    ser.setRTS(False)
+    if (len(RTS_GPIO)):
+        time.sleep(0.005)
+        value.write(RTS_PASSIVE)
+        value.flush()
+        value.close()
 
 def processTelemetry(teleData, ssnMsg):
      for teleItem in teleData['devs']:
@@ -78,11 +112,12 @@ def raw_data_callback(client, userdata, msg):
                 #process TELEMETRY message
                 logWrite("TELEMETRY message, src Obj="+str(tmpMsg.srcObj), level="i")
                 try:
+#                    logWrite("JSON: "+tmpMsg.msgData, level="d")
                     ssn_data = json.loads(tmpMsg.msgData)
-                    if (ssn_data['ssn']['ret'] == "getdevvals"):
-                        processTelemetry(ssn_data['ssn']['data'], tmpMsg)
                 except Exception as ex:
-                    logWrite("Cannot decode JSON object, payload={}: {}".format(tmpMsg.msgData,ex), level="e")
+                    logWrite("TELEMETRY. Cannot decode JSON object, payload={}: {}".format(tmpMsg.msgData,ex), level="e")
+                if (ssn_data['ssn']['ret'] == "getdevvals"):
+                    processTelemetry(ssn_data['ssn']['data'], tmpMsg)
             else:
                 logWrite("skip row data processing", level="i")
                 
@@ -109,15 +144,27 @@ def on_message(client, userdata, msg):
             if (tmpMsg.destObj in serial_if):
                 logWrite("route into serial, dest Obj="+str(tmpMsg.destObj), level="i")
                 # use serial interface
-                ser1.setRTS(True)
-            #        time.sleep(0.5)
-                ser1.write(str(msg.payload))
-                while (ser1.outWaiting() > 0):
-                    time.sleep(0.01)
-                ser1.setRTS(False)
+#                serWrite(ser1, str(msg.payload))
+                serPutMsg(str(msg.payload))
+#                ser1.setRTS(True)
+#                ser1.write(str(msg.payload))
+#                while (ser1.outWaiting() > 0):
+#                    time.sleep(0.01)
+#                ser1.setRTS(False)
             else:
                 logWrite("skip serial routing", level="i")
 
+
+def serQProc():
+    global serLastReceive
+    while True:
+        buf = sendQueue.get()
+        tDelta = datetime.now() - serLastReceive
+        # wait random time if last reading operation < SSNsendMinTimeout
+        if (tDelta.total_seconds() < SSNsendMinTimeout):
+            time.sleep(SSNsendMinTimeout + SSNsendMinTimeout * random.random())
+        logWrite("LastReceive delta: "+str(tDelta), "d")
+        serWrite(ser1, buf)
 
 def logQProc():
     while True:
@@ -136,17 +183,23 @@ def ledoff():
         value = open("/sys/class/leds/"+LED_BLINK+"/brightness","w")
         value.write(str(0))
         value.close()
+
+
         
 def listenerSerial(ser, queue):
     logWrite( "Serial listener started. Dev: "+ser.port)
+    global serLastReceive
     tail = ""
     while(1):
 #        print "read.."
-        ser.setRTS(False)
-        buf = tail + ser.read(SerialBufferSize)
+#        ser.setRTS(False)
+#        buf = tail + ser.read(SerialBufferSize)
+        buf = tail + serRead(ser, SerialBufferSize)
+        serLastReceive = datetime.now()
         if (buf):
             ledon()
-            logWrite("BUF:"+buf)
+#            logWrite("Serial buf[01]{:02X}{:02X}".format(ord(buf[0]),ord(buf[1])), level="d")
+            logWrite("BUF:"+buf[0:50]+"...","d")
 #            logWrite("TAIL:"+tail)
             #tail = processBuffer(buf, channel=0, ser=ser)
 #            client.publish(TOPIC_PROC_DATA, payload=buf, qos=0, retain=False)
@@ -175,6 +228,7 @@ Serialrtscts=config["Serialrtscts"]
 
 ssnTimeout = config["SSNTimeout"]
 SerialTimeout = config["SerialTimeout"]
+SSNsendMinTimeout = config["SSNsendMinTimeout"]
 
 TCPBufferSize=config["TCPBufferSize"]
 MQTT_HOST = config["MQTT_HOST"]             # mqtt boker host
@@ -183,10 +237,14 @@ MQTT_BROKER_USER = config["MQTT_BROKER_USER"]     # mqtt broker user
 MQTT_BROKER_PASS = config["MQTT_BROKER_PASS"]     # mqtt broker password
 MQTT_BROKER_CLIENT_ID = config["MQTT_BROKER_CLIENT_ID"] # broker client id
 LED_BLINK = config["LED_BLINK"]
+RTS_GPIO = config["RTS_GPIO"]
+RTS_ACTIVE = config["RTS_ACTIVE"]
+RTS_PASSIVE = config["RTS_PASSIVE"]
 
 ACCOUNT = config["ACCOUNT"]
 #TOPIC_COMMANDS = config["TOPIC_COMMANDS"]
 #TOPIC_PROC_DATA = config["TOPIC_PROC_DATA"]
+
 
 ser1 = serial.Serial(
     port=SerialPort,
@@ -194,6 +252,7 @@ ser1 = serial.Serial(
     timeout=SerialTimeout,
     parity=serial.PARITY_NONE,
     stopbits=serial.STOPBITS_ONE,
+#    rtscts = False,
     rtscts = Serialrtscts,
     bytesize=serial.EIGHTBITS
 )
@@ -201,6 +260,20 @@ ser1 = serial.Serial(
 
 # ============================================================================
 if __name__ == "__main__":
+    if (len(RTS_GPIO)):
+        value = open("/sys/class/gpio/export","w")
+        value.write(RTS_GPIO)
+        value.flush()
+        time.sleep(0.5)
+        try:
+            value = open("/sys/class/gpio/gpio"+str(RTS_GPIO)+"/direction","w")
+            value.write("out")
+        except:
+            time.sleep(1.5)
+            value = open("/sys/class/gpio/gpio"+str(RTS_GPIO)+"/direction","w")
+            value.write("out")
+        value.close()
+
     ser1.setRTS(False)
     queue = Queue()
 #    logWrite (strTest)
@@ -208,6 +281,10 @@ if __name__ == "__main__":
     workerLog = Thread(target=logQProc)
     workerLog.setDaemon(True)
     workerLog.start()
+    print "Start send queue listener"
+    workerSendQ = Thread(target=serQProc)
+    workerSendQ.setDaemon(True)
+    workerSendQ.start()
     print "Start serial listener"
     workerSerial = Thread(target=listenerSerial, args=(ser1, queue))
     workerSerial.setDaemon(True)
