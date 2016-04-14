@@ -1,14 +1,18 @@
 #!/usr/bin/env python
-from threading import Thread
-from Queue import Queue
-import paho.mqtt.client as mqtt
 import serial
-from ssn import ssnMsg
 import string
-#import threading
-from datetime import datetime
 import time
 import json
+import random
+from datetime import datetime
+from threading import Thread
+from Queue import Queue
+
+import paho.mqtt.client as mqtt
+
+# --- SSN custom modules:
+from ssn import ssnMsg
+from ssntelegram import ssnTlg
 
 # *******************************************
 logQueue = Queue()
@@ -20,6 +24,9 @@ def logWrite(logMsg, level='w'):
     logQueue.put(str(datetime.now()) + " " + logMsg)
     return
 
+def getTlgIf():
+    return tlg_if
+    
 def serPutMsg(buf):
 #    logWrite("serPutMsg")
     sendQueue.put(buf)
@@ -52,15 +59,34 @@ def serWrite(ser, buf):
         value.close()
 
 def processTelemetry(teleData, ssnMsg):
-     for teleItem in teleData['devs']:
-         if (len(teleItem)):
-              client.publish("/ssn/acc/"+str(ACCOUNT)+"/obj/"+
+    tlgBuf = ""
+    for teleItem in teleData['devs']:
+        if (len(teleItem)):
+            client.publish("/ssn/acc/"+str(ACCOUNT)+"/obj/"+
                   str(ssnMsg.srcObj)+"/device/"+str(teleItem['dev'])+"/"+str(teleItem['i'])+"/out",
                   payload=teleItem['val'], qos=0, retain=True)
-              client.publish("/ssn/acc/"+str(ACCOUNT)+"/obj/"+
+                      
+            client.publish("/ssn/acc/"+str(ACCOUNT)+"/obj/"+
                   str(ssnMsg.srcObj)+"/device/"+str(teleItem['dev'])+"/"+str(teleItem['i'])+"/devicetime",
                   payload=teleItem['updtime'], qos=0, retain=True)
+                  
+            if (ssnMsg.destObj == getTlgIf()):
+                strBuf = "d["+str(teleItem['dev'])+","+str(teleItem['i'])+"]="+str(teleItem['val'])
+                tlgBuf += strBuf+"\r\n"
+                
+    # check for Telegram dest:
+    if (ssnMsg.destObj == getTlgIf()):
+                logWrite("route to Telegram: "+strBuf, level="i")
+                client.publish("/ssn/acc/"+str(ACCOUNT)+"/telegram/out",
+                  payload=tlgBuf, qos=0, retain=False)
 
+# --- messages to Telegram bot:
+def tlg_data_callback(client, userdata, msg):
+    global ssnbot
+    logWrite("Telegram out: "+msg.topic+"->"+msg.payload, level="i")
+    if (ssnbot):
+        ssnbot.sendTlgMessage(msg.payload)
+    
 # The callback for when a PUBLISH message is received from the server from raw_data topic.
 def sdv_callback(client, userdata, msg):
     #print(msg.topic+" "+str(msg.payload))
@@ -110,7 +136,7 @@ def raw_data_callback(client, userdata, msg):
                 logWrite("JSON message, src Obj="+str(tmpMsg.srcObj), level="i")
             elif (tmpMsg.msgType == 3):
                 #process TELEMETRY message
-                logWrite("TELEMETRY message, src Obj="+str(tmpMsg.srcObj), level="i")
+                logWrite("TELEMETRY message, src_Obj="+str(tmpMsg.srcObj)+" dst_Obj="+str(tmpMsg.destObj), level="i")
                 try:
 #                    logWrite("JSON: "+tmpMsg.msgData, level="d")
                     ssn_data = json.loads(tmpMsg.msgData)
@@ -127,7 +153,9 @@ def on_connect(client, userdata, flags, rc):
 
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
-    client.subscribe([("/ssn/acc/"+str(ACCOUNT)+"/raw_data", 0), ("/ssn/acc/"+str(ACCOUNT)+"/obj/+/commands", 0),
+    client.subscribe([("/ssn/acc/"+str(ACCOUNT)+"/raw_data", 0), 
+                      ("/ssn/acc/"+str(ACCOUNT)+"/obj/+/commands", 0),
+                      ("/ssn/acc/"+str(ACCOUNT)+"/telegram/out", 0),
                       ("/ssn/acc/"+str(ACCOUNT)+"/obj/+/device/+/+/in", 0)])
 
 
@@ -151,6 +179,10 @@ def on_message(client, userdata, msg):
 #                while (ser1.outWaiting() > 0):
 #                    time.sleep(0.01)
 #                ser1.setRTS(False)
+            elif (tmpMsg.destObj == tlg_if):
+                logWrite("route to Telegram: "+msg.topic+"->"+msg.payload, level="i")
+                if (ssnbot):
+                    ssnbot.sendTlgMessage(msg.payload)
             else:
                 logWrite("skip serial routing", level="i")
 
@@ -221,6 +253,8 @@ execfile("ssnmqtt.cfg", config)
 # objects routing interfaces
 serial_if = config["serial_if"]
 #tcp_if = config["tcp_if"]
+tlg_if = config["tlg_if"]
+
 Serialbaudrate=config["Serialbaudrate"]
 SerialPort=config["SerialPort"]
 SerialBufferSize=config["SerialBufferSize"]
@@ -242,10 +276,14 @@ RTS_ACTIVE = config["RTS_ACTIVE"]
 RTS_PASSIVE = config["RTS_PASSIVE"]
 
 ACCOUNT = config["ACCOUNT"]
-#TOPIC_COMMANDS = config["TOPIC_COMMANDS"]
-#TOPIC_PROC_DATA = config["TOPIC_PROC_DATA"]
 
-
+# --- Telegram bot settings:
+try:
+    TEL_TOKEN = config["TEL_TOKEN"]
+    SSN_GRP_ID = config["SSN_GRP_ID"]
+except:
+    TEL_TOKEN = ""
+    
 ser1 = serial.Serial(
     port=SerialPort,
     baudrate=Serialbaudrate,
@@ -293,14 +331,23 @@ if __name__ == "__main__":
     client = mqtt.Client(client_id=MQTT_BROKER_CLIENT_ID)
     client.on_connect = on_connect
     client.on_message = on_message
+
     client.raw_data_callback = raw_data_callback
     client.message_callback_add("/ssn/acc/"+str(ACCOUNT)+"/raw_data", raw_data_callback)
+
     client.sdv_callback = sdv_callback
     client.message_callback_add("/ssn/acc/"+str(ACCOUNT)+"/obj/+/device/+/+/in", sdv_callback)
+
+    client.tlg_data_callback = tlg_data_callback
+    client.message_callback_add("/ssn/acc/"+str(ACCOUNT)+"/telegram/out", tlg_data_callback)
 
     client.username_pw_set(MQTT_BROKER_USER, password=MQTT_BROKER_PASS)
     
     client.connect(MQTT_HOST, MQTT_PORT, 60)
+    
+# --- start Telegram bot:
+    if (TEL_TOKEN):
+        ssnbot = ssnTlg(TEL_TOKEN, SSN_GRP_ID, acc = ACCOUNT, client = client)
     
     # Blocking call that processes network traffic, dispatches callbacks and
     # handles reconnecting.
