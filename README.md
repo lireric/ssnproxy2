@@ -27,3 +27,5 @@ MQTT topics structure:
 /ssn/acc/<account_number>/email/out - output messages
 /ssn/acc/<account_number>/email/in  - input messages
 
+
+Rename file ssnmqtt.cfg.sample to ssnmqtt.cfg and change preferences to you own.

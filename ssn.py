@@ -2,7 +2,7 @@
 """
 Created on Mon Mar  7 21:39:17 2016
 
-@author: eric
+@author: eric@mail.ru
 """
 from datetime import datetime
 #import crc16

@@ -1,0 +1,45 @@
+# routes interfaces to objects:
+tcp_if = [3,4]
+serial_if = [1,2,10]
+tlg_if = 5 # Telegram object
+
+# TCP settings:
+TCPBufferSize=10000
+#HOST = "0.0.0.0"    # Symbolic name meaning all available interfaces
+MQTT_PORT = 1883            # MQTT broker TCP port 
+MQTT_HOST = "192.168.1.150"   # host name for client connections
+MQTT_BROKER_USER = "mosquitto"
+MQTT_BROKER_PASS = "test"
+MQTT_BROKER_CLIENT_ID = "client_host"
+
+SSNDB_HOST = "192.168.1.114" # "localhost"
+SSNDB_PORT = 27017
+SSNDB_USER = ""
+SSNDB_PASS = ""
+SSNDB_DBNAME = "ssndb"
+
+#TOPIC_PROC_DATA = "raw_data"
+#TOPIC_COMMANDS = "commands"
+
+# Account specific settings
+ACCOUNT = 1
+
+SSNTimeout = 5           # set a timeout value, None for waiting forever
+SSNsendMinTimeout = 0.03    # min timeout before sending to serial line (sec)
+
+# serial port settings:
+Serialbaudrate=57600
+SerialPort='/dev/ttyUSB1'
+SerialBufferSize=10000
+Serialrtscts=False
+SerialTimeout=1           #set a timeout value, None for waiting forever
+
+# hardware settings
+LED_BLINK = "gl_ar150:lan"
+RTS_GPIO = "1"
+RTS_ACTIVE = "0"
+RTS_PASSIVE = "1"
+
+#telegram settings
+TEL_TOKEN = "__________"
+SSN_GRP_ID = "-________"
