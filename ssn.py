@@ -27,14 +27,21 @@ class ssnMsg(object):
         self.msgSerial = msgSerial
         self.msgTimestamp = datetime.now()
     def getSSNPDU(self):
-        buf = "{}{:04x}{:04x}{:02x}{:04x}{}{:04x}".format(cSSNSTART,self.destObj,\
-        self.srcObj,self.msgType,len(self.msgData),self.msgData,CRCCCITT(version="FFFF").calculate(self.msgData))
+        try:
+            crc = CRCCCITT(version="FFFF").calculate(self.msgData)
+            buf = "{}{:04x}{:04x}{:02x}{:04x}{}{:04x}".format(cSSNSTART,self.destObj,\
+            self.srcObj, self.msgType, len(self.msgData), self.msgData, crc)
 #        self.srcObj,self.msgType,len(self.msgData),self.msgData,crc16.crc16xmodem(self.msgData, 0xffff))
+        except Exception, e:
+            print >> sys.stderr, "\ndest_obj: "+str(self.destObj)+" src_obj: " + str(self.srcObj) + " msgType: "\
+                +str(self.msgType)+ "CRC: ", + crc + " MSG: "+self.msgData 
+            print >> sys.stderr, "Error generating SSN PDU: "+str(e)
+            buf = ""
         return buf
 
     # scan text buffer and try to parse SSN message format:
     def processBuffer(self, buf):
-        bufTail = ""
+        bufTail = buf
         nResult = False     # success or not result
         
         if len(buf) > 0:
@@ -59,10 +66,10 @@ class ssnMsg(object):
     # * timeout = 2 sec
     # *
     # * */
-                destObj, srcObj, msgType, packetLen = \
-                struct.unpack_from('<4s4s2s4s', buf, pduPos + len(cSSNSTART))
                 try:
-                # convert to integers
+                    destObj, srcObj, msgType, packetLen = \
+                    struct.unpack_from('<4s4s2s4s', buf, pduPos + len(cSSNSTART))
+                    # convert to integers
                     destObj = int(destObj, 16)
                     srcObj = int(srcObj, 16)
                     msgType = int(msgType, 16)
