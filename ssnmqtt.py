@@ -323,23 +323,27 @@ def listenerSerial(ser, queue):
 #        print "read.."
 #        ser.setRTS(False)
 #        buf = tail + ser.read(SerialBufferSize)
-        buf = unicode(tail + serRead(ser, SerialBufferSize))
-        serLastReceive = datetime.now()
-        if (buf):
-            ledon()
-#            logWrite("Serial buf[01]{:02X}{:02X}".format(ord(buf[0]),ord(buf[1])), level="d")
-            logger1.debug("BUF:"+buf[0:50]+"...")
-#            logWrite("TAIL:"+tail)
-            #tail = processBuffer(buf, channel=0, ser=ser)
-#            client.publish(TOPIC_PROC_DATA, payload=buf, qos=0, retain=False)
-            try:
-                client.publish("/ssn/acc/"+str(ACCOUNT)+"/raw_data", payload=buf, qos=0, retain=False)
-            except Exception, e:
-                logger1.error("Error publishing message"+unicode(e))
-            ledoff()
-#            for i in buf:
-#                value = struct.unpack('B', i)[0]
-#                print "%02x" % (value),
+        try:
+#            buf = tail + serRead(ser, SerialBufferSize)
+            buf = serRead(ser, SerialBufferSize).decode('utf-8','ignore').encode("utf-8")
+            serLastReceive = datetime.now()
+            if (buf):
+                ledon()
+#               logWrite("Serial buf[01]{:02X}{:02X}".format(ord(buf[0]),ord(buf[1])), level="d")
+                logger1.debug("BUF:"+buf[0:50]+"...")
+#               logWrite("TAIL:"+tail)
+                #tail = processBuffer(buf, channel=0, ser=ser)
+#               client.publish(TOPIC_PROC_DATA, payload=buf, qos=0, retain=False)
+                try:
+                    client.publish("/ssn/acc/"+str(ACCOUNT)+"/raw_data", payload=buf, qos=0, retain=False)
+                except Exception as e:
+                    logger1.error("Error publishing message"+unicode(e))
+                ledoff()
+#               for i in buf:
+#                    value = struct.unpack('B', i)[0]
+#                   print "%02x" % (value),
+        except Exception as ex:
+                logger1.error("Error in receiving from serial:"+unicode(ex))
     logger1.info("Exit serial")
     return
 
@@ -423,7 +427,7 @@ ser1 = serial.Serial(
 
 # ============================================================================
 if __name__ == "__main__":
-    logger1 = logging.getLogger('ssnweb')
+    logger1 = logging.getLogger('ssnmqtt')
     logger1.setLevel(logging.DEBUG)
     # create syslog handler
     slh = logging.handlers.SysLogHandler(address = '/dev/log')
